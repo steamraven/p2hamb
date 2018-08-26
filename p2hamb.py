@@ -3,6 +3,7 @@ import binascii
 import json
 import os
 import re
+import logging
 from base64 import b64decode, b64encode
 from hashlib import blake2b
 from hmac import compare_digest
@@ -84,6 +85,12 @@ async def handle_config(message: ApplicationMessage) -> None:
                        )
             for topic in user_data['whitelist']
         ]
+    log_level = getattr(logging, config['log_level'].upper(), None)
+    if not isinstance(log_level, int):
+        app.logger.error("Invalid log level: %s" % config['log_level'])
+    else:
+        logging.basicConfig(level=log_level)
+
     app.config['config'] = config
     app.logger.info("Set new configuration")
 
@@ -112,7 +119,12 @@ async def connect_mqtt() -> MQTTClient:
             'message': STATUS_OFFLINE,
             'qos': QOS_0
 
-        }
+        },
+        'ping_delay': 10,
+        'keep_alive': 15,
+        'auto_reconnect': True,
+        'reconnect_max_interval': 5,
+        'reconnect_retries': 10000
     }
     client = MQTTClient(client_id=app.config['NODE_NAME'], config=config)
     await client.connect(app.config['MQTT_URL'], cleansession=False)

@@ -1,0 +1,7 @@
+keep_alive: 10
+ping_delay: 5
+default_qos: 0
+default_retain: false
+auto_reconnect: true
+reconnect_max_interval: 5
+reconnect_retries: 100000

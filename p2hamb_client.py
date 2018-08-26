@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import logging
 from base64 import b64decode, b64encode, urlsafe_b64encode
 from hashlib import blake2b
 from typing import cast, IO, Any
@@ -35,6 +36,7 @@ class Settings:
             'users': {},
         },
         'server':  {
+            'log_level': 'warning',
             'security': {},
         }
     }
@@ -66,12 +68,18 @@ class Settings:
 @click.option("--batch", is_flag=True)
 @click.option("--config-file", envvar="CONFIG_FILE", default=".config.json",
               type=click.Path(dir_okay=False))
+@click.option("-d", "--debug", is_flag=True)
 @click.pass_context
-def cli(ctx: click.Context, batch: bool, config_file: str) -> None:
+def cli(ctx: click.Context, batch: bool,
+        config_file: str, debug: bool) -> None:
     ctx.obj = Settings(config_file)
     ctx.obj.batch = batch
     if batch:
         ctx.resilient_parsing = True
+    if debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.WARNING)
 
 
 @cli.group()
@@ -154,12 +162,11 @@ def create_user(obj: Settings, username: str, force: bool) -> None:
 @click.pass_obj
 def push_config(obj: Settings) -> None:
     'Utility command to push a new configuration to the MQTT server'
-
     data = json.dumps(obj.data['server']).encode('UTF8')
     key = b64decode(obj.data['client']['HMAC_KEY'])
     signature = hmac(key, b'', data)
     config = data+signature
-    click.echo("Pushing config...")
+    click.echo("Pushing config:")
     click.echo(data)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(_push_config(obj, config))
@@ -170,16 +177,25 @@ def push_config(obj: Settings) -> None:
 
 async def _push_config(obj: Settings, config: bytes) -> None:
     'Asyncrouns part of pushing a new configuration to the server'
-    client = MQTTClient()
+    client_config = {
+        'auto_reconnect': True,
+        'ping_delay': 25,
+        'keep_alive': 30,
+
+    }
+    client = MQTTClient(config=client_config)
     node_name = obj.data['client']['NODE_NAME']
     status_topic = obj.data['client']['STATUS_TOPIC'].replace(
         "{node}", node_name)
     config_topic = obj.data['client']['CONFIG_TOPIC'].replace(
         "{node}", node_name)
+    click.echo("Connecting to %s..." % obj.data['client']['CLIENT_MQTT_URL'])
     await client.connect(obj.data['client']['CLIENT_MQTT_URL'])
     await client.subscribe([(status_topic, QOS_1)])
+    click.echo("Publishing at %s ..." % config_topic)
     await client.publish(config_topic, config,
                          qos=QOS_1, retain=True)
+    click.echo("Waiting on %s ..." % status_topic)
     while True:
         # wait for confirmation
         message = await client.deliver_message()
