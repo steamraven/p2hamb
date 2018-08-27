@@ -1,11 +1,11 @@
 
 import asyncio
 import json
-import os
 import logging
+import os
 from base64 import b64decode, b64encode, urlsafe_b64encode
 from hashlib import blake2b
-from typing import cast, IO, Any
+from typing import IO, Any, cast
 
 import click
 from hbmqtt.client import QOS_1, MQTTClient

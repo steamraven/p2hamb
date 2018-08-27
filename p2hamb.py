@@ -1,18 +1,20 @@
 import asyncio
 import binascii
 import json
+import logging
 import os
 import re
-import logging
 from base64 import b64decode, b64encode
 from hashlib import blake2b
 from hmac import compare_digest
 from typing import Any, Mapping, MutableMapping, Optional, cast
 
 from hbmqtt.client import QOS_0, QOS_1, MQTTClient
+from hbmqtt.mqtt.connack import ConnackPacket
+from hbmqtt.plugins.manager import Plugin
 from hbmqtt.session import ApplicationMessage
 from quart import Quart, abort, request
-from quart.exceptions import HTTPStatusException, HTTPStatus
+from quart.exceptions import HTTPStatus, HTTPStatusException
 
 # Magic Constants
 STATUS_ONLINE = b'online'
@@ -51,6 +53,25 @@ class Unauthorized(HTTPStatusException):
         headers = super().get_headers()
         headers['WWW-Authenticate'] = self.www_authenticate
         return headers
+
+
+class OnConnectPlugin:
+    '''hbmqtt plugin to execute callback on connect'''
+
+    def __init__(self, callback):
+        self.callback = callback
+
+    async def on_mqtt_packet_received(self, *args, **kwargs):
+        packet = kwargs.get('packet')
+        if isinstance(packet, ConnackPacket):
+            asyncio.ensure_future(self.callback())
+
+    def add_to_plugins(self, client):
+        client.plugins_manager._plugins.append(
+            Plugin(type(self).__name__,
+                   None,
+                   self)
+        )
 
 
 def assert_config() -> Mapping[str, Any]:
@@ -135,9 +156,16 @@ async def connect_mqtt() -> MQTTClient:
         (app.config['CONFIG_TOPIC'], QOS_1)
     ])
 
+    # Add plugin to publish birth on reconnect
+    async def _publish_birth():
+        await client.publish(app.config['STATUS_TOPIC'], STATUS_ONLINE,
+                             retain=True)
+    OnConnectPlugin(_publish_birth).add_to_plugins(client)
     # publish birth
     await client.publish(app.config['STATUS_TOPIC'], STATUS_ONLINE,
                          retain=True)
+
+    # handle messages
     asyncio.ensure_future(handle_messages(client))
     return client
 
