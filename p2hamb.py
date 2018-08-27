@@ -274,4 +274,4 @@ async def start():
     await get_mqtt()
 
 if __name__ == '__main__':
-    app.run(port=os.environ['PORT'])
+    app.run(host="0.0.0.0", port=os.environ['PORT'])
