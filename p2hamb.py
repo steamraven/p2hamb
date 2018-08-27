@@ -124,7 +124,8 @@ async def connect_mqtt() -> MQTTClient:
         'keep_alive': 15,
         'auto_reconnect': True,
         'reconnect_max_interval': 5,
-        'reconnect_retries': 10000
+        'reconnect_retries': 10000,
+        'default_qos': QOS_1,
     }
     client = MQTTClient(client_id=app.config['NODE_NAME'], config=config)
     await client.connect(app.config['MQTT_URL'], cleansession=False)
