@@ -3,12 +3,13 @@ import asyncio
 import json
 import logging
 import os
+import urllib.parse
 from base64 import b64decode, b64encode, urlsafe_b64encode
 from hashlib import blake2b
 from typing import IO, Any, cast
 
 import click
-from hbmqtt.client import QOS_1, MQTTClient
+from aiomqtt import Client
 
 # Magic Constants
 STATUS_ONLINE = b'online'
@@ -177,35 +178,54 @@ def push_config(obj: Settings) -> None:
 
 async def _push_config(obj: Settings, config: bytes) -> None:
     'Asyncrouns part of pushing a new configuration to the server'
-    client_config = {
-        'auto_reconnect': True,
-        'ping_delay': 25,
-        'keep_alive': 30,
+    # client_config = {
+    #    'auto_reconnect': True,
+    #    'ping_delay': 25,
+    #    'keep_alive': 30,
+    # }
 
-    }
-    client = MQTTClient(config=client_config)
+    mqtt_url = obj.data['client']['CLIENT_MQTT_URL']
+    parsed_url = urllib.parse.urlparse(mqtt_url)
     node_name = obj.data['client']['NODE_NAME']
     status_topic = obj.data['client']['STATUS_TOPIC'].replace(
         "{node}", node_name)
     config_topic = obj.data['client']['CONFIG_TOPIC'].replace(
         "{node}", node_name)
-    click.echo("Connecting to %s..." % obj.data['client']['CLIENT_MQTT_URL'])
-    await client.connect(obj.data['client']['CLIENT_MQTT_URL'])
-    await client.subscribe([(status_topic, QOS_1)])
+
+    client = Client()
+    client.enable_logger()
+    if parsed_url.scheme == 'mqtts':
+        client.tls_set()
+    else:
+        assert parsed_url.scheme == 'mqtt'
+    client.username_pw_set(parsed_url.username, parsed_url.password)
+
+    loop = asyncio.ensure_future(client.loop_forever())
+    message_queue: asyncio.Queue = asyncio.Queue()
+
+    def on_message(client, useradata, message):
+        message_queue.put_nowait(message)
+    client.on_message = on_message
+
+    click.echo("Connecting to %s..." % mqtt_url)
+    await client.connect(parsed_url.hostname, parsed_url.port, )
+    client.subscribe([(status_topic, 1)])
     click.echo("Publishing at %s ..." % config_topic)
-    await client.publish(config_topic, config,
-                         qos=QOS_1, retain=True)
+    mi = client.publish(config_topic, config,
+                        qos=1, retain=True)
+    await mi.wait_for_publish()
     click.echo("Waiting on %s ..." % status_topic)
     while True:
         # wait for confirmation
-        message = await client.deliver_message()
+        message = await message_queue.get()
         if (message.topic == status_topic
-                and message.data == STATUS_RELOAD_CONFIG):
+                and message.payload == STATUS_RELOAD_CONFIG):
             click.echo("Received confirmation of new configuration")
             break
         else:
             click.echo("Status: " + message.topic)
-    await client.disconnect()
+    client.disconnect()
+    await loop
 
 if __name__ == '__main__':
     cli()  # pylint: disable=no-value-for-parameter
